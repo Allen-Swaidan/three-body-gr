@@ -7,21 +7,21 @@
 
 class SpacetimeGrid {
 public:
-    void init(float size, int divisions);
-    void update(const std::array<Body, Simulation::NUM_BODIES>& bodies);
+    void init(float cellSize, int divisions);
+    void update(const std::array<Body, Simulation::NUM_BODIES>& bodies,
+                const glm::vec3& cameraPos);
     void draw() const;
     void cleanup();
 
 private:
     GLuint vao = 0, vbo = 0, ebo = 0;
     int gridDivisions;
-    float gridSize;
+    float cellSize;
     int indexCount = 0;
 
     struct Vertex {
         glm::vec3 position;
-        glm::vec3 basePosition;  // unwarped position
-        float curvature;         // for coloring
+        float curvature;
     };
 
     std::vector<Vertex> vertices;

@@ -174,6 +174,10 @@ int main(int argc, char* argv[]) {
         style.WindowPadding = ImVec2(8, 8);
         style.ItemSpacing = ImVec2(6, 3);
         style.FramePadding = ImVec2(4, 3);
+    } else {
+        // Normal mode: ensure full-size readable UI
+        ImGuiIO& io = ImGui::GetIO();
+        io.FontGlobalScale = 1.0f;
     }
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 450");
@@ -194,7 +198,7 @@ int main(int argc, char* argv[]) {
     for (auto& t : traces) t.init(Body::MAX_TRACE_POINTS);
 
     SpacetimeGrid grid;
-    grid.init(200.0f, 80);
+    grid.init(2.5f, 120);  // 2.5 unit cells, 120 divisions = 300 unit span, follows camera
 
     // UI state for position editing
     struct BodyUI {
@@ -261,7 +265,7 @@ int main(int argc, char* argv[]) {
         sim.step(deltaTime);
 
         // Update spacetime grid
-        if (showGrid) grid.update(sim.bodies);
+        if (showGrid) grid.update(sim.bodies, camera.position);
 
         // Update trace buffers
         for (int i = 0; i < 3; ++i) {
@@ -349,8 +353,8 @@ int main(int argc, char* argv[]) {
             }
         } else {
             // Full interactive UI
-            ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
+            ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_Once);
             ImGui::Begin("3-Body GR Simulation");
 
             ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
