@@ -15,8 +15,18 @@
 
 #include <iostream>
 #include <array>
+#include <cstring>
+#include <fstream>
+#include <filesystem>
+#include <cstdio>
 
 // ── Globals ───────────────────────────────────────────────────────────────────
+static bool recordMode = false;
+static int recordWidth = 960;
+static int recordHeight = 540;
+static int recordFPS = 30;
+static float recordDuration = 15.0f;   // seconds of demo
+static std::string recordDir = "frames";
 static Camera camera;
 static float lastX = 640.0f, lastY = 360.0f;
 static bool firstMouse = true;
@@ -66,7 +76,59 @@ static void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) camera.processKeyboard(Camera::DOWN, deltaTime);
 }
 
-int main() {
+static void saveFramePPM(const std::string& path, int w, int h, const std::vector<unsigned char>& pixels) {
+    std::ofstream f(path, std::ios::binary);
+    f << "P6\n" << w << " " << h << "\n255\n";
+    // OpenGL gives bottom-up, flip vertically
+    for (int y = h - 1; y >= 0; --y)
+        f.write(reinterpret_cast<const char*>(&pixels[y * w * 3]), w * 3);
+}
+
+// Autopilot camera: orbits around the scene, rises and dips.
+// Look target is offset to the right so the compact UI panel in the
+// upper-left corner doesn't occlude the bodies.
+static void autopilotCamera(float t, float duration) {
+    float phase = t / duration; // 0..1
+    constexpr float PI = 3.14159265f;
+
+    // Orbit: 1.5 full rotations with radius and height variation
+    float angle = phase * 2.0f * PI * 1.5f;
+    float radius = 55.0f + 15.0f * std::sin(phase * PI * 2.0f);
+    float height = 25.0f + 20.0f * std::sin(phase * PI * 3.0f);
+
+    camera.position = glm::vec3(
+        radius * std::cos(angle),
+        height,
+        radius * std::sin(angle)
+    );
+
+    // Look at a point offset to the right of screen-center so the action
+    // sits in the right ~75% of the frame, away from the UI overlay
+    glm::vec3 target(0.0f, -3.0f, 0.0f);
+    glm::vec3 toTarget = glm::normalize(target - camera.position);
+    glm::vec3 tempRight = glm::normalize(glm::cross(toTarget, camera.worldUp));
+    // Nudge the target to the right in screen space
+    target += tempRight * 12.0f;
+
+    camera.front = glm::normalize(target - camera.position);
+    camera.right = glm::normalize(glm::cross(camera.front, camera.worldUp));
+    camera.up = glm::normalize(glm::cross(camera.right, camera.front));
+}
+
+int main(int argc, char* argv[]) {
+    // Parse --record flag
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--record") == 0) recordMode = true;
+        if (std::strcmp(argv[i], "--duration") == 0 && i + 1 < argc)
+            recordDuration = std::stof(argv[++i]);
+    }
+
+    if (recordMode) {
+        std::cout << "Recording mode: " << recordDuration << "s at " << recordFPS
+                  << " FPS (" << recordWidth << "x" << recordHeight << ")\n";
+        std::filesystem::create_directories(recordDir);
+    }
+
     // ── Init GLFW ─────────────────────────────────────────────────────────────
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -74,7 +136,10 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SAMPLES, 4);
 
-    GLFWwindow* window = glfwCreateWindow(1600, 900, "3-Body Problem - General Relativity", nullptr, nullptr);
+    int winW = recordMode ? recordWidth : 1600;
+    int winH = recordMode ? recordHeight : 900;
+    if (recordMode) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // offscreen OK
+    GLFWwindow* window = glfwCreateWindow(winW, winH, "3-Body Problem - General Relativity", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
@@ -101,6 +166,15 @@ int main() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
+    if (recordMode) {
+        // Smaller font and tighter padding for compact overlay
+        ImGuiIO& io = ImGui::GetIO();
+        io.FontGlobalScale = 0.9f;
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowPadding = ImVec2(8, 8);
+        style.ItemSpacing = ImVec2(6, 3);
+        style.FramePadding = ImVec2(4, 3);
+    }
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 450");
 
@@ -154,13 +228,34 @@ int main() {
     bool showGrid = true;
     bool showTraces = true;
 
+    // In record mode, auto-start simulation with higher time scale
+    if (recordMode) {
+        syncSimFromUI();
+        sim.running = true;
+        sim.timeScale = 2.0;
+        timeScaleUI = 2.0f;
+    }
+
+    int frameIndex = 0;
+    int totalFrames = (int)(recordDuration * recordFPS);
+    float fixedDt = 1.0f / (float)recordFPS;
+    float recordTime = 0.0f;
+    std::vector<unsigned char> pixelBuffer;
+    if (recordMode) pixelBuffer.resize(recordWidth * recordHeight * 3);
+
     // ── Main loop ─────────────────────────────────────────────────────────────
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
-        deltaTime = currentFrame - lastFrame;
+        deltaTime = recordMode ? fixedDt : (currentFrame - lastFrame);
         lastFrame = currentFrame;
 
-        processInput(window);
+        if (recordMode) {
+            if (frameIndex >= totalFrames) break;
+            autopilotCamera(recordTime, recordDuration);
+            recordTime += fixedDt;
+        } else {
+            processInput(window);
+        }
 
         // Simulation step
         sim.step(deltaTime);
@@ -226,15 +321,6 @@ int main() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_FirstUseEver);
-        ImGui::Begin("3-Body GR Simulation");
-
-        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-        ImGui::Text("Elapsed: %.2f s", sim.elapsedTime);
-        ImGui::Separator();
-
-        // Controls
         const char* bodyNames[] = { "Body 1 (Red)", "Body 2 (Blue)", "Body 3 (Green)" };
         ImVec4 bodyImColors[] = {
             ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
@@ -242,63 +328,104 @@ int main() {
             ImVec4(0.3f, 1.0f, 0.4f, 1.0f)
         };
 
-        if (!sim.running) {
-            ImGui::TextColored(ImVec4(1, 1, 0, 1), "Setup Mode - Configure bodies then Start");
+        if (recordMode) {
+            // Compact overlay pinned to upper-left corner
+            ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(200, 0), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.75f);
+            ImGui::Begin("3-Body GR Simulation", nullptr,
+                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoCollapse);
+
+            ImGui::Text("Elapsed: %.2f s", sim.elapsedTime);
+            ImGui::Text("Time Scale: %.1fx", sim.timeScale);
             ImGui::Separator();
-
             for (int i = 0; i < 3; ++i) {
-                ImGui::PushID(i);
                 ImGui::TextColored(bodyImColors[i], "%s", bodyNames[i]);
-                ImGui::DragFloat3("Position", bodyUI[i].pos, 0.5f, -100.0f, 100.0f, "%.1f");
-                ImGui::DragFloat3("Velocity", bodyUI[i].vel, 0.1f, -20.0f, 20.0f, "%.2f");
-                ImGui::DragFloat("Mass", &bodyUI[i].mass, 1.0f, 1.0f, 500.0f, "%.0f");
-                ImGui::Spacing();
-                ImGui::PopID();
-            }
-
-            if (ImGui::Button("Start Simulation", ImVec2(-1, 30))) {
-                syncSimFromUI();
-                sim.running = true;
-            }
-            if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
-                sim.initDefaultBodies();
-                syncUIFromSim();
-            }
-        } else {
-            for (int i = 0; i < 3; ++i) {
-                ImGui::TextColored(bodyImColors[i], "%s: (%.1f, %.1f, %.1f)",
-                    bodyNames[i],
+                ImGui::Text("  (%.1f, %.1f, %.1f)",
                     sim.bodies[i].position.x,
                     sim.bodies[i].position.y,
                     sim.bodies[i].position.z);
             }
+        } else {
+            // Full interactive UI
+            ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_FirstUseEver);
+            ImGui::Begin("3-Body GR Simulation");
+
+            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+            ImGui::Text("Elapsed: %.2f s", sim.elapsedTime);
             ImGui::Separator();
 
-            ImGui::SliderFloat("Time Scale", &timeScaleUI, 0.1f, 10.0f, "%.1fx");
-            sim.timeScale = timeScaleUI;
+            if (!sim.running) {
+                ImGui::TextColored(ImVec4(1, 1, 0, 1), "Setup Mode - Configure bodies then Start");
+                ImGui::Separator();
 
-            if (ImGui::Button("Pause")) sim.running = false;
-            ImGui::SameLine();
-            if (ImGui::Button("Resume")) sim.running = true;
-            ImGui::SameLine();
-            if (ImGui::Button("Reset")) {
-                sim.reset();
-                sim.initDefaultBodies();
-                syncUIFromSim();
+                for (int i = 0; i < 3; ++i) {
+                    ImGui::PushID(i);
+                    ImGui::TextColored(bodyImColors[i], "%s", bodyNames[i]);
+                    ImGui::DragFloat3("Position", bodyUI[i].pos, 0.5f, -100.0f, 100.0f, "%.1f");
+                    ImGui::DragFloat3("Velocity", bodyUI[i].vel, 0.1f, -20.0f, 20.0f, "%.2f");
+                    ImGui::DragFloat("Mass", &bodyUI[i].mass, 1.0f, 1.0f, 500.0f, "%.0f");
+                    ImGui::Spacing();
+                    ImGui::PopID();
+                }
+
+                if (ImGui::Button("Start Simulation", ImVec2(-1, 30))) {
+                    syncSimFromUI();
+                    sim.running = true;
+                }
+                if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
+                    sim.initDefaultBodies();
+                    syncUIFromSim();
+                }
+            } else {
+                for (int i = 0; i < 3; ++i) {
+                    ImGui::TextColored(bodyImColors[i], "%s: (%.1f, %.1f, %.1f)",
+                        bodyNames[i],
+                        sim.bodies[i].position.x,
+                        sim.bodies[i].position.y,
+                        sim.bodies[i].position.z);
+                }
+                ImGui::Separator();
+
+                ImGui::SliderFloat("Time Scale", &timeScaleUI, 0.1f, 10.0f, "%.1fx");
+                sim.timeScale = timeScaleUI;
+
+                if (ImGui::Button("Pause")) sim.running = false;
+                ImGui::SameLine();
+                if (ImGui::Button("Resume")) sim.running = true;
+                ImGui::SameLine();
+                if (ImGui::Button("Reset")) {
+                    sim.reset();
+                    sim.initDefaultBodies();
+                    syncUIFromSim();
+                }
             }
+
+            ImGui::Separator();
+            ImGui::Checkbox("Show Spacetime Grid", &showGrid);
+            ImGui::Checkbox("Show Trace Paths", &showTraces);
+
+            ImGui::Separator();
+            ImGui::TextWrapped("Camera: WASD + Space/Shift to move. ESC to toggle mouse look. Scroll to zoom.");
         }
-
-        ImGui::Separator();
-        ImGui::Checkbox("Show Spacetime Grid", &showGrid);
-        ImGui::Checkbox("Show Trace Paths", &showTraces);
-
-        ImGui::Separator();
-        ImGui::TextWrapped("Camera: WASD + Space/Shift to move. ESC to toggle mouse look. Scroll to zoom.");
 
         ImGui::End();
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        // ── Record frame ──────────────────────────────────────────────────────
+        if (recordMode) {
+            glReadPixels(0, 0, recordWidth, recordHeight, GL_RGB, GL_UNSIGNED_BYTE, pixelBuffer.data());
+            char fname[64];
+            std::snprintf(fname, sizeof(fname), "frame_%05d.ppm", frameIndex);
+            saveFramePPM(recordDir + "/" + fname, recordWidth, recordHeight, pixelBuffer);
+            frameIndex++;
+            if (frameIndex % 30 == 0)
+                std::cout << "  Captured " << frameIndex << "/" << totalFrames << " frames\n";
+        }
 
         glfwSwapBuffers(window);
         glfwPollEvents();

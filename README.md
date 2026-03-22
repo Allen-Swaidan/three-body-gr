@@ -4,6 +4,10 @@ A real-time 3D simulation of the gravitational three-body problem using **genera
 
 Rather than using Newton's law of gravitation, this simulation models gravity through the **Einstein-Infeld-Hoffmann (EIH) equations of motion** — the first post-Newtonian (1PN) approximation derived directly from the Einstein field equations. A deformable spacetime fabric grid warps in real-time to visualize the curvature of spacetime around each massive body.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Three-body GR simulation demo" width="800">
+</p>
+
 ---
 
 ## Features
@@ -20,12 +24,6 @@ Rather than using Newton's law of gravitation, this simulation models gravity th
 - **Time scale control** — speed up or slow down the simulation in real-time
 - **RK4 integration** — 4th-order Runge-Kutta integrator with sub-stepping for numerical stability
 - **Dear ImGui interface** — clean control panel for setup, playback, and display options
-
----
-
-## Screenshots
-
-*Run the simulation and press `Print Screen` to capture your own — every configuration produces unique chaotic orbits!*
 
 ---
 
@@ -119,6 +117,25 @@ The executable must be run from the `build/` directory (or wherever the `shaders
 4. Press **ESC** again to release the mouse and interact with the UI
 5. Use the **Time Scale** slider to speed up or slow down
 6. Click **Reset** to return to setup mode
+
+---
+
+## Recording a Demo GIF
+
+The application includes a built-in recording mode with an autopilot camera that orbits the scene:
+
+```bash
+# Record 15 seconds of demo footage (saves PPM frames to frames/)
+./three_body_gr --record
+
+# Optionally set duration
+./three_body_gr --record --duration 20
+
+# Convert frames to GIF with ffmpeg
+ffmpeg -framerate 30 -i frames/frame_%05d.ppm -vf "fps=15,scale=800:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" assets/demo.gif
+```
+
+The autopilot camera orbits, rises, and dips around the simulation to showcase the bodies, traces, spacetime grid warping, and smooth camera movement.
 
 ---
 
