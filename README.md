@@ -1,6 +1,6 @@
 # Three-Body Problem — General Relativity Simulation
 
-A real-time 3D simulation of the gravitational three-body problem using **general relativity** instead of Newtonian mechanics. Built with modern **OpenGL 4.5** and **C++17**.
+A real-time 3D simulation of the gravitational three-body problem using **general relativity** instead of Newtonian mechanics. Built with modern **OpenGL 4.5** and **C++17** assisted with Claude AI.
 
 Rather than using Newton's law of gravitation, this simulation models gravity through the **Einstein-Infeld-Hoffmann (EIH) equations of motion** — the first post-Newtonian (1PN) approximation derived directly from the Einstein field equations. A deformable spacetime fabric grid warps in real-time to visualize the curvature of spacetime around each massive body.
 
